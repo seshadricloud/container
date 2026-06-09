@@ -1,0 +1,339 @@
+// ============================================================================
+// Main Jenkins Pipeline - Multi-Stage CI/CD
+// ============================================================================
+
+@Library('shared-library') _
+
+pipeline {
+    agent any
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 1, unit: 'HOURS')
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        string(name: 'ENVIRONMENT', defaultValue: 'dev', description: 'Deployment environment (dev/staging/prod)')
+        string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region')
+        booleanParam(name: 'DEPLOY', defaultValue: false, description: 'Deploy to EKS')
+        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker image tag')
+    }
+
+    environment {
+        // AWS Configuration
+        AWS_ACCOUNT_ID = credentials('aws-account-id')
+        AWS_REGION = "${params.AWS_REGION}"
+        ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        
+        // Application Configuration
+        APP_NAME = "myapp"
+        IMAGE_NAME = "${ECR_REGISTRY}/${APP_NAME}"
+        IMAGE_TAG = "${params.IMAGE_TAG ?: env.BUILD_NUMBER}"
+        FULL_IMAGE = "${IMAGE_NAME}:${IMAGE_TAG}"
+        
+        // Kubernetes Configuration
+        KUBE_NAMESPACE = "${params.ENVIRONMENT}"
+        KUBECONFIG = "/tmp/kubeconfig"
+        
+        // Jenkins Configuration
+        ARTIFACTORY_CREDENTIALS = credentials('artifactory-credentials')
+        SLACK_WEBHOOK = credentials('slack-webhook-url')
+    }
+
+    stages {
+        stage('🔍 Checkout') {
+            steps {
+                script {
+                    echo "========================================"
+                    echo "Checking out source code from ${env.GIT_BRANCH}"
+                    echo "========================================"
+                }
+                checkout scm
+                script {
+                    env.GIT_COMMIT_MSG = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
+                    env.GIT_AUTHOR = sh(script: 'git log -1 --pretty=%an', returnStdout: true).trim()
+                }
+            }
+        }
+
+        stage('🧪 Unit Tests') {
+            steps {
+                script {
+                    echo "Running unit tests..."
+                }
+                sh '''
+                    cd application
+                    pip install -r requirements.txt
+                    pip install pytest pytest-cov
+                    pytest tests/ -v --cov=src --cov-report=xml --cov-report=html
+                '''
+            }
+            post {
+                always {
+                    junit 'application/test-results.xml'
+                    publishHTML([
+                        reportDir: 'application/htmlcov',
+                        reportFiles: 'index.html',
+                        reportName: 'Code Coverage Report'
+                    ])
+                }
+            }
+        }
+
+        stage('🔒 Security Scan') {
+            steps {
+                script {
+                    echo "Running security scans..."
+                }
+                sh '''
+                    # Install security scanning tools
+                    pip install bandit safety
+                    
+                    # Run Bandit for code security
+                    bandit -r application/src -f json -o bandit-report.json || true
+                    
+                    # Check dependencies for vulnerabilities
+                    safety check --json > safety-report.json || true
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: '*-report.json', allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('🐳 Build Docker Image') {
+            steps {
+                script {
+                    echo "Building Docker image: ${FULL_IMAGE}"
+                    sh '''
+                        cd application
+                        docker build -t ${FULL_IMAGE} \
+                            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+                            --build-arg VCS_REF=${GIT_COMMIT} \
+                            --build-arg VERSION=${IMAGE_TAG} \
+                            -f Dockerfile .
+                    '''
+                }
+            }
+        }
+
+        stage('🔐 Push to ECR') {
+            steps {
+                script {
+                    echo "Pushing image to ECR: ${FULL_IMAGE}"
+                    sh '''
+                        # Login to ECR
+                        aws ecr get-login-password --region ${AWS_REGION} | \
+                            docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                        
+                        # Push image with multiple tags
+                        docker push ${FULL_IMAGE}
+                        docker tag ${FULL_IMAGE} ${IMAGE_NAME}:${ENVIRONMENT}
+                        docker push ${IMAGE_NAME}:${ENVIRONMENT}
+                        
+                        # Push latest tag for main/master branch
+                        if [ "${GIT_BRANCH}" = "main" ] || [ "${GIT_BRANCH}" = "master" ]; then
+                            docker tag ${FULL_IMAGE} ${IMAGE_NAME}:latest
+                            docker push ${IMAGE_NAME}:latest
+                        fi
+                    '''
+                }
+            }
+        }
+
+        stage('🖼️ Image Scanning') {
+            steps {
+                script {
+                    echo "Scanning Docker image for vulnerabilities..."
+                    sh '''
+                        # Run ECR image scan
+                        aws ecr start-image-scan \
+                            --repository-name ${APP_NAME} \
+                            --image-id imageTag=${IMAGE_TAG} \
+                            --region ${AWS_REGION} || true
+                        
+                        # Wait for scan completion
+                        sleep 30
+                        
+                        # Get scan results
+                        aws ecr describe-image-scan-findings \
+                            --repository-name ${APP_NAME} \
+                            --image-id imageTag=${IMAGE_TAG} \
+                            --region ${AWS_REGION} || true
+                    '''
+                }
+            }
+        }
+
+        stage('📋 Terraform Plan') {
+            when {
+                expression { params.ENVIRONMENT == 'prod' }
+            }
+            steps {
+                script {
+                    echo "Planning infrastructure changes..."
+                    sh '''
+                        cd terraform
+                        terraform init -backend=false
+                        terraform plan \
+                            -var-file="environments/${ENVIRONMENT}.tfvars" \
+                            -out=tfplan
+                        terraform show tfplan > tfplan.txt
+                    '''
+                    archiveArtifacts artifacts: 'terraform/tfplan.txt'
+                }
+            }
+        }
+
+        stage('✅ Approval for Production') {
+            when {
+                expression { params.ENVIRONMENT == 'prod' && params.DEPLOY }
+            }
+            steps {
+                script {
+                    echo "Waiting for approval to deploy to PRODUCTION..."
+                    input message: 'Deploy to Production?', ok: 'Deploy'
+                }
+            }
+        }
+
+        stage('🚀 Deploy to EKS') {
+            when {
+                expression { params.DEPLOY }
+            }
+            steps {
+                script {
+                    echo "Deploying to EKS cluster in ${ENVIRONMENT} environment..."
+                    sh '''
+                        # Get kubeconfig
+                        aws eks update-kubeconfig \
+                            --name myapp-${ENVIRONMENT}-eks \
+                            --region ${AWS_REGION}
+                        
+                        # Create namespace if not exists
+                        kubectl create namespace ${KUBE_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        
+                        # Update image in deployment
+                        kubectl set image deployment/myapp-deployment \
+                            myapp=${FULL_IMAGE} \
+                            -n ${KUBE_NAMESPACE} || true
+                        
+                        # Apply Kubernetes manifests
+                        kubectl apply -f kubernetes/ -n ${KUBE_NAMESPACE}
+                        
+                        # Wait for rollout
+                        kubectl rollout status deployment/myapp-deployment -n ${KUBE_NAMESPACE} --timeout=5m
+                    '''
+                }
+            }
+        }
+
+        stage('🔄 Smoke Tests') {
+            when {
+                expression { params.DEPLOY }
+            }
+            steps {
+                script {
+                    echo "Running smoke tests against deployed application..."
+                    sh '''
+                        # Get ALB DNS name
+                        ALB_DNS=$(aws elbv2 describe-load-balancers \
+                            --query "LoadBalancers[?LoadBalancerName=='myapp-alb'].DNSName" \
+                            --output text --region ${AWS_REGION})
+                        
+                        echo "Testing application at http://${ALB_DNS}/health"
+                        
+                        # Test application health
+                        for i in {1..30}; do
+                            if curl -s http://${ALB_DNS}/health | grep -q "ok"; then
+                                echo "Application is healthy!"
+                                exit 0
+                            fi
+                            echo "Waiting for application... (${i}/30)"
+                            sleep 10
+                        done
+                        
+                        echo "Application failed health check"
+                        exit 1
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                // Cleanup
+                sh '''
+                    docker logout ${ECR_REGISTRY} || true
+                    docker system prune -f --volumes || true
+                '''
+                
+                // Generate reports
+                junit '**/test-results.xml'
+            }
+        }
+        success {
+            script {
+                echo "Pipeline succeeded!"
+                // Send Slack notification
+                sh '''
+                    curl -X POST ${SLACK_WEBHOOK} \
+                        -H 'Content-Type: application/json' \
+                        -d @- <<EOF
+{
+    "text": "✅ Deployment Successful",
+    "attachments": [
+        {
+            "color": "good",
+            "fields": [
+                {"title": "Environment", "value": "${ENVIRONMENT}", "short": true},
+                {"title": "Image", "value": "${FULL_IMAGE}", "short": true},
+                {"title": "Author", "value": "${GIT_AUTHOR}", "short": true},
+                {"title": "Build", "value": "#${BUILD_NUMBER}", "short": true}
+            ]
+        }
+    ]
+}
+EOF
+                '''
+            }
+        }
+        failure {
+            script {
+                echo "Pipeline failed!"
+                // Send Slack notification
+                sh '''
+                    curl -X POST ${SLACK_WEBHOOK} \
+                        -H 'Content-Type: application/json' \
+                        -d @- <<EOF
+{
+    "text": "❌ Deployment Failed",
+    "attachments": [
+        {
+            "color": "danger",
+            "fields": [
+                {"title": "Environment", "value": "${ENVIRONMENT}", "short": true},
+                {"title": "Build", "value": "#${BUILD_NUMBER}", "short": true},
+                {"title": "Check", "value": "${BUILD_URL}console", "short": true}
+            ]
+        }
+    ]
+}
+EOF
+                '''
+            }
+        }
+        unstable {
+            echo "Pipeline is unstable!"
+        }
+        cleanup {
+            deleteDir()
+        }
+    }
+}
