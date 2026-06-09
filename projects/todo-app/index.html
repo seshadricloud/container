@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>To-Do List App</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1><i class="fas fa-tasks"></i> My To-Do List</h1>
+                <p class="subtitle">Stay organized and productive</p>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Input Section -->
+            <div class="input-section">
+                <div class="input-group">
+                    <input
+                        type="text"
+                        id="todoInput"
+                        class="todo-input"
+                        placeholder="Add a new task..."
+                        autocomplete="off"
+                    />
+                    <button id="addBtn" class="add-btn" title="Add task">
+                        <i class="fas fa-plus"></i> Add
+                    </button>
+                </div>
+                <div class="filter-buttons">
+                    <button class="filter-btn active" data-filter="all">
+                        <i class="fas fa-list"></i> All
+                    </button>
+                    <button class="filter-btn" data-filter="active">
+                        <i class="fas fa-circle"></i> Active
+                    </button>
+                    <button class="filter-btn" data-filter="completed">
+                        <i class="fas fa-check-circle"></i> Completed
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats Section -->
+            <div class="stats-section">
+                <div class="stat-item">
+                    <span class="stat-label">Total:</span>
+                    <span class="stat-value" id="totalTasks">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Active:</span>
+                    <span class="stat-value active-count" id="activeTasks">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Completed:</span>
+                    <span class="stat-value completed-count" id="completedTasks">0</span>
+                </div>
+            </div>
+
+            <!-- Tasks List -->
+            <div class="tasks-container">
+                <ul class="tasks-list" id="tasksList">
+                    <!-- Tasks will be inserted here -->
+                </ul>
+
+                <!-- Empty State -->
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-icon">
+                        <i class="fas fa-inbox"></i>
+                    </div>
+                    <h3>No tasks yet</h3>
+                    <p>Add a task to get started!</p>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="action-buttons">
+                <button id="clearCompletedBtn" class="action-btn clear-btn" title="Clear completed tasks">
+                    <i class="fas fa-trash"></i> Clear Completed
+                </button>
+                <button id="clearAllBtn" class="action-btn clear-all-btn" title="Clear all tasks">
+                    <i class="fas fa-broom"></i> Clear All
+                </button>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Tasks are automatically saved to your browser's local storage</p>
+            <p class="version">v1.0.0</p>
+        </footer>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div class="modal" id="confirmModal">
+        <div class="modal-content">
+            <h2>Confirm Action</h2>
+            <p id="modalMessage"></p>
+            <div class="modal-buttons">
+                <button class="modal-btn cancel-btn" id="cancelBtn">Cancel</button>
+                <button class="modal-btn confirm-btn" id="confirmBtn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Modal -->
+    <div class="modal" id="editModal">
+        <div class="modal-content">
+            <h2>Edit Task</h2>
+            <input
+                type="text"
+                id="editInput"
+                class="edit-input"
+                placeholder="Edit your task..."
+            />
+            <div class="modal-buttons">
+                <button class="modal-btn cancel-btn" id="editCancelBtn">Cancel</button>
+                <button class="modal-btn confirm-btn" id="editConfirmBtn">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toast"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>

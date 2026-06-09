@@ -1,0 +1,32 @@
+{
+  "name": "todo-app",
+  "version": "1.0.0",
+  "description": "A modern to-do list application with local storage functionality",
+  "main": "index.html",
+  "scripts": {
+    "start": "open index.html",
+    "serve": "python3 -m http.server 8000"
+  },
+  "keywords": [
+    "todo",
+    "task-list",
+    "productivity",
+    "local-storage",
+    "javascript",
+    "web-app"
+  ],
+  "author": "Seshadri Cloud",
+  "license": "MIT",
+  "features": {
+    "add-tasks": "Create new tasks easily",
+    "edit-tasks": "Modify existing tasks",
+    "delete-tasks": "Remove tasks",
+    "complete-tasks": "Mark tasks as complete",
+    "filter-tasks": "View all, active, or completed tasks",
+    "local-storage": "Automatic persistence in browser",
+    "statistics": "Real-time task statistics",
+    "responsive-design": "Works on all devices",
+    "animations": "Smooth transitions and effects",
+    "accessibility": "Keyboard navigation support"
+  }
+}
