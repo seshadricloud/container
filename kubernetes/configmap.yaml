@@ -1,0 +1,19 @@
+# ============================================================================
+# Kubernetes ConfigMap
+# ============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: myapp-config
+data:
+  app.conf: |
+    [application]
+    name = myapp
+    debug = false
+    log_level = info
+    [database]
+    pool_size = 10
+    pool_recycle = 3600
+    [cache]
+    ttl = 3600
